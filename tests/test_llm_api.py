@@ -44,7 +44,8 @@ def get_env_value(key, provider):
         "mistral": {"api_key": "MISTRAL_API_KEY", "base_url": "MISTRAL_ENDPOINT"},
         "alibaba": {"api_key": "ALIBABA_API_KEY", "base_url": "ALIBABA_ENDPOINT"},
         "moonshot": {"api_key": "MOONSHOT_API_KEY", "base_url": "MOONSHOT_ENDPOINT"},
-        "ibm": {"api_key": "IBM_API_KEY", "base_url": "IBM_ENDPOINT"}
+        "ibm": {"api_key": "IBM_API_KEY", "base_url": "IBM_ENDPOINT"},
+        "lmstudio": {"api_key": "LMSTUDIO_API_KEY", "base_url": "LMSTUDIO_ENDPOINT"}
     }
 
     if provider in env_mappings and key in env_mappings[provider]:

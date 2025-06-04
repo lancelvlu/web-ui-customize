@@ -9,6 +9,7 @@ PROVIDER_DISPLAY_NAMES = {
     "unbound": "Unbound AI",
     "ibm": "IBM",
     "grok": "Grok",
+    "lmstudio": "LM Studio",
 }
 
 # Predefined model names for common providers
@@ -34,6 +35,9 @@ model_names = {
         "grok-2-vision",
         "grok-2-image",
         "grok-2",
+    ],
+    "lmstudio": [
+        "qwq-32b@4bit",
     ],
     "siliconflow": [
         "deepseek-ai/DeepSeek-R1",
