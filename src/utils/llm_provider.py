@@ -171,6 +171,11 @@ class LMStudioChatModel(BaseChatModel):
         self.api_key = api_key or os.getenv("LMSTUDIO_API_KEY", "lmstudio")
         self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
 
+    @property
+    def _llm_type(self) -> str:
+        """Return type of chat model."""
+        return "lmstudio-chat"
+
     def _format_messages(self, messages: list[BaseMessage]) -> list[dict]:
         formatted = []
         for m in messages:
