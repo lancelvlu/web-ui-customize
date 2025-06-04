@@ -7,6 +7,7 @@ from langchain_core.language_models.base import (
     LangSmithParams,
     LanguageModelInput,
 )
+from langchain_core.language_models.chat_models import BaseChatModel
 import os
 from langchain_core.load import dumpd, dumps
 from langchain_core.messages import (
@@ -30,6 +31,8 @@ from langchain_ollama import ChatOllama
 from langchain_core.output_parsers.base import OutputParserLike
 from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.tools import BaseTool
+from langchain_core.callbacks import CallbackManagerForLLMRun
+from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from typing import (
     TYPE_CHECKING,
@@ -38,7 +41,10 @@ from typing import (
     Literal,
     Optional,
     Union,
-    cast, List,
+    cast,
+    List,
+    Sequence,
+    Iterator,
 )
 from langchain_anthropic import ChatAnthropic
 from langchain_mistralai import ChatMistralAI
@@ -149,6 +155,105 @@ class DeepSeekR1ChatOllama(ChatOllama):
         return AIMessage(content=content, reasoning_content=reasoning_content)
 
 
+class LMStudioChatModel(BaseChatModel):
+    """Minimal chat model for LM Studio using OpenAI-compatible API."""
+
+    model_name: str
+    temperature: float
+    base_url: str
+    api_key: str
+
+    def __init__(self, model: str = "qwq-32b@4bit", temperature: float = 0.0,
+                 base_url: Optional[str] = None, api_key: Optional[str] = None) -> None:
+        self.model_name = model
+        self.temperature = temperature
+        self.base_url = base_url or os.getenv("LMSTUDIO_ENDPOINT", "http://localhost:1234/v1")
+        self.api_key = api_key or os.getenv("LMSTUDIO_API_KEY", "lmstudio")
+        self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+
+    @property
+    def _llm_type(self) -> str:
+        """Return type of chat model."""
+        return "lmstudio-chat"
+
+    def _format_messages(self, messages: list[BaseMessage]) -> list[dict]:
+        formatted = []
+        for m in messages:
+            if isinstance(m, SystemMessage):
+                formatted.append({"role": "system", "content": m.content})
+            elif isinstance(m, AIMessage):
+                formatted.append({"role": "assistant", "content": m.content})
+            elif isinstance(m, HumanMessage):
+                formatted.append({"role": "user", "content": m.content})
+            else:
+                formatted.append({"role": "user", "content": m.content})
+        return formatted
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: Optional[list[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        payload = {
+            "model": self.model_name,
+            "messages": self._format_messages(messages),
+            "temperature": self.temperature,
+        }
+        if stop:
+            payload["stop"] = stop
+        payload.update(kwargs)
+        response = self.client.chat.completions.create(**payload)
+        message = response.choices[0].message
+        ai_msg = AIMessage(content=message.content or "")
+        if message.tool_calls:
+            ai_msg.additional_kwargs = {
+                "tool_calls": [tc.model_dump() for tc in message.tool_calls]
+            }
+        return ChatResult(generations=[ChatGeneration(message=ai_msg)])
+
+    def _stream(
+        self,
+        messages: list[BaseMessage],
+        stop: Optional[list[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        payload = {
+            "model": self.model_name,
+            "messages": self._format_messages(messages),
+            "temperature": self.temperature,
+            "stream": True,
+        }
+        if stop:
+            payload["stop"] = stop
+        payload.update(kwargs)
+        for chunk in self.client.chat.completions.create(**payload):
+            delta = chunk.choices[0].delta
+            content = delta.content or ""
+            yield ChatGenerationChunk(message=AIMessageChunk(content=content))
+
+    def bind_tools(
+        self,
+        tools: Sequence[Union[dict, type, Callable, BaseTool]],
+        *,
+        tool_choice: Optional[Union[dict, str, Literal["auto", "none", "required", "any"], bool]] = None,
+        **kwargs: Any,
+    ) -> Runnable:
+        formatted_tools = [convert_to_openai_tool(t) for t in tools]
+        tool_names = [t.get("function", {}).get("name") for t in formatted_tools]
+        if tool_choice:
+            if isinstance(tool_choice, str):
+                if tool_choice in tool_names:
+                    tool_choice = {"type": "function", "function": {"name": tool_choice}}
+                elif tool_choice == "any":
+                    tool_choice = "required"
+            elif isinstance(tool_choice, bool):
+                tool_choice = "required"
+            kwargs["tool_choice"] = tool_choice
+        return self.bind(tools=formatted_tools, **kwargs)
+
 def get_llm_model(provider: str, **kwargs):
     """
     Get LLM model
@@ -156,7 +261,7 @@ def get_llm_model(provider: str, **kwargs):
     :param kwargs:
     :return:
     """
-    if provider not in ["ollama", "bedrock"]:
+    if provider not in ["ollama", "bedrock", "lmstudio"]:
         env_var = f"{provider.upper()}_API_KEY"
         api_key = kwargs.get("api_key", "") or os.getenv(env_var, "")
         if not api_key:
@@ -216,6 +321,13 @@ def get_llm_model(provider: str, **kwargs):
             temperature=kwargs.get("temperature", 0.0),
             base_url=base_url,
             api_key=api_key,
+        )
+    elif provider == "lmstudio":
+        return LMStudioChatModel(
+            model=kwargs.get("model_name", "qwq-32b@4bit"),
+            temperature=kwargs.get("temperature", 0.0),
+            base_url=kwargs.get("base_url", os.getenv("LMSTUDIO_ENDPOINT", "http://localhost:1234/v1")),
+            api_key=kwargs.get("api_key", os.getenv("LMSTUDIO_API_KEY", "lmstudio")),
         )
     elif provider == "deepseek":
         if not kwargs.get("base_url", ""):
